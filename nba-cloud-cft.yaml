@@ -1,0 +1,254 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: 'Fantasy League Data Service - Serverless NBA stats fetching solution'
+
+Parameters:
+  S3BucketName:
+    Type: String
+    Default: 'basketball-scores-barnell-123'
+    Description: 'Name of the S3 bucket for storing basketball scores'
+    
+  ApiGatewayName:
+    Type: String
+    Default: 'nba'
+    Description: 'Name of the API Gateway'
+    
+  LambdaFunctionName:
+    Type: String
+    Default: 'NBAProxy'
+    Description: 'Name of the Lambda function'
+    
+  LambdaRoleName:
+    Type: String
+    Default: 'lambda-balldontlie-role'
+    Description: 'Name of the IAM role for Lambda function'
+    
+  Environment:
+    Type: String
+    Default: 'prod'
+    Description: 'Environment name for deployment stage'
+    AllowedValues:
+      - dev
+      - staging
+      - prod
+
+  BallDontLieApiKey:
+    Type: String
+    Default: 'b8176764-449e-4671-b9ea-xxxxxxxxxxxxx'
+    Description: 'API key for Ball Dont Lie API'
+    NoEcho: true
+
+  BallDontLieApiUrl:
+    Type: String
+    Default: 'https://api.balldontlie.io/v1/games?per_page=10&seasons[]=2024'
+    Description: 'Ball Dont Lie API URL with parameters'
+
+Resources:
+  # S3 Bucket matching your current configuration
+  BasketballScoresBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref S3BucketName
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: false
+        BlockPublicPolicy: false
+        IgnorePublicAcls: false
+        RestrictPublicBuckets: false
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+            BucketKeyEnabled: true
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      WebsiteConfiguration:
+        IndexDocument: index.html
+        ErrorDocument: error.html
+
+  # S3 Bucket Policy for public read access
+  BasketballScoresBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref BasketballScoresBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: PublicReadGetObject
+            Effect: Allow
+            Principal: '*'
+            Action: 's3:GetObject'
+            Resource: !Sub 'arn:aws:s3:::${S3BucketName}/*'
+
+  # IAM Role matching your current lambda-balldontlie-role configuration
+  NBAProxyLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Ref LambdaRoleName
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: AllowWriteScoresToS3
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                Resource:
+                  - !Sub 'arn:aws:s3:::${S3BucketName}/games/*'
+                  - !Sub 'arn:aws:s3:::${S3BucketName}/player-stats/*'
+
+  # Lambda function with your exact source code
+  NBAProxyFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Ref LambdaFunctionName
+      Runtime: python3.13
+      Handler: lambda_function.lambda_handler
+      MemorySize: 128
+      Timeout: 3
+      Architectures:
+        - x86_64
+      Role: !GetAtt NBAProxyLambdaRole.Arn
+      Environment:
+        Variables:
+          API_KEY: !Ref BallDontLieApiKey
+          API_URL: !Ref BallDontLieApiUrl
+      Code:
+        ZipFile: !Sub |
+          import json
+          import urllib.request
+          import os
+
+          API_KEY = os.environ['API_KEY']
+          API_URL = os.environ['API_URL']
+
+          def lambda_handler(event, context):
+              headers = {"Authorization": API_KEY}
+              req = urllib.request.Request(API_URL, headers=headers)
+
+              with urllib.request.urlopen(req) as resp:
+                  data = json.loads(resp.read().decode("utf-8"))
+
+              return {
+                  "statusCode": 200,
+                  "headers": {
+                      "Content-Type": "application/json",
+                      "Access-Control-Allow-Origin": "*"  # allow S3 website to call
+                  },
+                  "body": json.dumps(data)  # must be JSON string, not dict
+              }
+
+  # CloudWatch Log Group - Create before Lambda to avoid race condition
+  NBAProxyLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${LambdaFunctionName}'
+      RetentionInDays: 14
+
+  # HTTP API Gateway (matching your current setup)
+  NBAHttpApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: !Ref ApiGatewayName
+      Description: 'NBA Fantasy League Data API - On-demand data fetching'
+      ProtocolType: HTTP
+      CorsConfiguration:
+        AllowCredentials: false
+        AllowHeaders:
+          - Content-Type
+          - X-Amz-Date
+          - Authorization
+          - X-Api-Key
+          - X-Amz-Security-Token
+        AllowMethods:
+          - GET
+          - OPTIONS
+        AllowOrigins:
+          - '*'
+
+  # Lambda Integration for HTTP API
+  NBALambdaIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref NBAHttpApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${NBAProxyFunction.Arn}/invocations'
+      PayloadFormatVersion: '2.0'
+
+  # Route for GET / (matching your current route)
+  NBAGetRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref NBAHttpApi
+      RouteKey: 'GET /'
+      AuthorizationType: NONE
+      Target: !Sub 'integrations/${NBALambdaIntegration}'
+
+  # Default Stage for HTTP API
+  NBAApiStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref NBAHttpApi
+      StageName: !Ref Environment
+      AutoDeploy: true
+
+  # Lambda Permission for HTTP API Gateway
+  LambdaHttpApiPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref NBAProxyFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${NBAHttpApi}/*/*'
+
+Outputs:
+  HttpApiUrl:
+    Description: 'HTTP API Gateway endpoint URL'
+    Value: !Sub 'https://${NBAHttpApi}.execute-api.${AWS::Region}.amazonaws.com'
+    Export:
+      Name: !Sub '${AWS::StackName}-HttpApiUrl'
+
+  HttpApiId:
+    Description: 'HTTP API Gateway ID'
+    Value: !Ref NBAHttpApi
+    Export:
+      Name: !Sub '${AWS::StackName}-HttpApiId'
+
+  S3BucketName:
+    Description: 'S3 bucket name for storing NBA data'
+    Value: !Ref BasketballScoresBucket
+    Export:
+      Name: !Sub '${AWS::StackName}-S3Bucket'
+
+  S3WebsiteUrl:
+    Description: 'S3 website endpoint URL'
+    Value: !Sub 'http://${S3BucketName}.s3-website-${AWS::Region}.amazonaws.com'
+    Export:
+      Name: !Sub '${AWS::StackName}-S3Website'
+
+  S3BucketPolicyArn:
+    Description: 'S3 bucket policy ARN'
+    Value: !Ref BasketballScoresBucketPolicy
+    Export:
+      Name: !Sub '${AWS::StackName}-S3BucketPolicy'
+
+  LambdaFunctionName:
+    Description: 'Lambda function name'
+    Value: !Ref NBAProxyFunction
+    Export:
+      Name: !Sub '${AWS::StackName}-LambdaFunction'
+
+  LambdaFunctionArn:
+    Description: 'Lambda function ARN'
+    Value: !GetAtt NBAProxyFunction.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-LambdaArn'
