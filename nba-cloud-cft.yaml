@@ -44,7 +44,7 @@ Parameters:
     Description: 'Ball Dont Lie API URL with parameters'
 
 Resources:
-  # S3 Bucket matching your current configuration
+  # S3 Bucket for storing basketball scores
   BasketballScoresBucket:
     Type: AWS::S3::Bucket
     Properties:
@@ -80,7 +80,7 @@ Resources:
             Action: 's3:GetObject'
             Resource: !Sub 'arn:aws:s3:::${S3BucketName}/*'
 
-  # IAM Role matching your current lambda-balldontlie-role configuration
+  # IAM Role for Lambda with necessary permissions
   NBAProxyLambdaRole:
     Type: AWS::IAM::Role
     Properties:
@@ -106,7 +106,7 @@ Resources:
                   - !Sub 'arn:aws:s3:::${S3BucketName}/games/*'
                   - !Sub 'arn:aws:s3:::${S3BucketName}/player-stats/*'
 
-  # Lambda function with your exact source code
+  # Lambda function with source code
   NBAProxyFunction:
     Type: AWS::Lambda::Function
     Properties:
@@ -154,7 +154,7 @@ Resources:
       LogGroupName: !Sub '/aws/lambda/${LambdaFunctionName}'
       RetentionInDays: 14
 
-  # HTTP API Gateway (matching your current setup)
+  # HTTP API Gateway for Lambda function
   NBAHttpApi:
     Type: AWS::ApiGatewayV2::Api
     Properties:
@@ -184,7 +184,7 @@ Resources:
       IntegrationUri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${NBAProxyFunction.Arn}/invocations'
       PayloadFormatVersion: '2.0'
 
-  # Route for GET / (matching your current route)
+  # Route for GET / to Lambda Integration
   NBAGetRoute:
     Type: AWS::ApiGatewayV2::Route
     Properties:
