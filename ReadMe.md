@@ -1,3 +1,4 @@
+
 Fantasy League Data Service (AWS Serverless Solution)
 Designed and deployed a serverless data platform using AWS Lambda, API Gateway, S3, only fetching when the page is loaded(On-demand fetch = always live, zero background cost) to deliver real-time NBA game stats from the Balldontlie API. 
 Enabled secure, automated data retrieval and live score visualization for fantasy league applications.
