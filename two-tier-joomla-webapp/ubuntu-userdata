@@ -1,0 +1,62 @@
+#!/bin/bash
+# ==========================================
+# User Data Script - Joomla Installation on Ubuntu EC2
+# ==========================================
+
+# --- Define Variables ---
+DB_HOST="<your-database-endpoint>"
+DB_NAME="<your-database-name>"
+DB_USER="<your-database-username>"
+DB_PASS="<your-database-password>"
+
+# --- Update and install dependencies ---
+apt update -y && apt upgrade -y
+apt install -y apache2 php php-mysql php-xml php-mbstring php-curl unzip wget
+
+# --- Enable and start Apache service ---
+systemctl enable apache2
+systemctl start apache2
+
+# --- Download and install Joomla ---
+cd /tmp
+wget https://downloads.joomla.org/latest.zip -O joomla.zip
+
+# Unzip Joomla to the web root
+unzip joomla.zip -d /var/www/html/
+
+# Set ownership and permissions
+chown -R www-data:www-data /var/www/html
+chmod -R 755 /var/www/html
+
+# --- Create Joomla configuration file ---
+cat <<EOF > /var/www/html/configuration.php
+<?php
+class JConfig {
+    public \$offline = '0';
+    public \$host = '$DB_HOST';
+    public \$user = '$DB_USER';
+    public \$password = '$DB_PASS';
+    public \$db = '$DB_NAME';
+    public \$dbtype = 'mysqli';
+    public \$log_path = '/var/www/html/administrator/logs';
+    public \$tmp_path = '/var/www/html/tmp';
+    public \$live_site = '';
+    public \$force_ssl = 0;
+}
+EOF
+
+# --- Secure permissions ---
+chmod 640 /var/www/html/configuration.php
+chown www-data:www-data /var/www/html/configuration.php
+
+# --- Restart Apache to apply changes ---
+systemctl restart apache2
+
+# --- Remove Joomla installation directory (security step) ---
+rm -rf /var/www/html/installation
+
+# --- Clean up temporary files ---
+rm -f /tmp/joomla.zip
+
+echo "✅ Joomla installation and configuration complete!"
+echo "Access your site via the server's public IP or domain."
